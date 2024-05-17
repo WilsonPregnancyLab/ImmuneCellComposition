@@ -1,0 +1,529 @@
+---
+title: "GSE192918_EpiDISH_GestationalAgeImmunocomposition"
+author: "L"
+date: "2024-04-03"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r}
+#   Data plots for selected GEO samples
+library(GEOquery)
+library(limma)
+
+# load series and platform data from GEO
+gset <- getGEO("GSE192918", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL21145", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+
+#Normalize the data set, apply quantiles
+if (!requireNamespace("preprocessCore", quietly = TRUE))
+    BiocManager::install("preprocessCore")
+library(preprocessCore)
+ex_normalized <- normalize.quantiles(ex, keep.names = TRUE)
+
+#Run EpiDISH
+if (!requireNamespace("EpiDISH", quietly = TRUE))
+    BiocManager::install("EpiDISH")
+library(EpiDISH)
+N_Epidish_GSE192918 <- epidish(beta.m = ex_normalized, ref.m = centDHSbloodDMC.m, method = "RPC")
+
+print(N_Epidish_GSE192918)
+MASTER_GSE192918_EstFraction <- N_Epidish_GSE192918$estF
+
+#SEPERATE OUT SUBSETS OF ANALSYSIS
+library(dplyr)
+#MASTER -TRIMESTER ONE) ONLY
+GSM_lines_10_14weeks <- c("GSM5769032", "GSM5769036", "GSM5769040", "GSM5769044", "GSM5769048", "GSM5769052", "GSM5769056", "GSM5769060", "GSM5769064", "GSM5769068")
+Trimester1_10_14weeks_Master <- MASTER_GSE192918_EstFraction[rownames(MASTER_GSE192918_EstFraction) %in% GSM_lines_10_14weeks,]
+print(Trimester1_10_14weeks_Master)
+
+#MASTER -TRIMESTER TWO) ONLY
+GSM_lines_24_28weeks <- c("GSM5769033", "GSM5769037", "GSM5769041", "GSM5769045", "GSM5769049", "GSM5769053", "GSM5769057", "GSM5769061", "GSM5769065", "GSM5769069")
+Trimester2_24_28weeks_Master <- MASTER_GSE192918_EstFraction[rownames(MASTER_GSE192918_EstFraction) %in% GSM_lines_24_28weeks,]
+print(Trimester2_24_28weeks_Master)
+
+#MASTER -TRIMESTER THREE) ONLY
+GSM_lines_38_40weeks <- c("GSM5769034", "GSM5769038", "GSM5769042", "GSM5769046", "GSM5769050", "GSM5769054", "GSM5769058", "GSM5769062", "GSM5769066", "GSM5769070")
+Trimester3_38_40weeks_Master <- MASTER_GSE192918_EstFraction[rownames(MASTER_GSE192918_EstFraction) %in% GSM_lines_38_40weeks,]
+print(Trimester3_38_40weeks_Master)
+
+#MASTER -POST-PARTUM) ONLY
+GSM_lines_PP <- c("GSM5769035", "GSM5769039", "GSM5769043", "GSM5769047", "GSM5769051", "GSM5769055", "GSM5769059", "GSM5769063", "GSM5769067", "GSM5769071")
+PP_Master <- MASTER_GSE192918_EstFraction[rownames(MASTER_GSE192918_EstFraction) %in% GSM_lines_PP,]
+print(PP_Master)
+```
+
+```{r}
+library(reshape2)
+library(PMCMRplus)
+
+
+ad_test <- adAllPairsTest(x = c(melt(Trimester1_10_14weeks_Master)$value, melt(Trimester2_24_28weeks_Master)$value, melt(Trimester3_38_40weeks_Master)$value, melt(PP_Master)$value), g = c(rep(1, 70),rep(2, 70),rep(3, 70), rep(4, 70)), p.adjust.method = 'fdr')
+ad_p_vals <-  ad_test$p.value
+p_vals_melt <- melt(ad_p_vals)
+p_vals_melt <- p_vals_melt[complete.cases(p_vals_melt),]
+
+names(p_vals_melt) <- c('Timepoint1', 'Timepoint2', 'p')
+row.names(p_vals_melt) <- NULL
+p_vals_melt$Timepoint1 <- replace(p_vals_melt$Timepoint1, p_vals_melt$Timepoint1 == 1, 'First Trimester')
+p_vals_melt$Timepoint1 <- replace(p_vals_melt$Timepoint1, p_vals_melt$Timepoint1 == 2, 'Second Trimester')
+p_vals_melt$Timepoint1 <- replace(p_vals_melt$Timepoint1, p_vals_melt$Timepoint1 == 3, 'Third Trimester')
+p_vals_melt$Timepoint1 <- replace(p_vals_melt$Timepoint1, p_vals_melt$Timepoint1 == 4, 'Post-Partum')
+p_vals_melt$Timepoint2 <- replace(p_vals_melt$Timepoint2, p_vals_melt$Timepoint2 == 1, 'First Trimester')
+p_vals_melt$Timepoint2 <- replace(p_vals_melt$Timepoint2, p_vals_melt$Timepoint2 == 2, 'Third Trimester')
+p_vals_melt$Timepoint2 <- replace(p_vals_melt$Timepoint2, p_vals_melt$Timepoint2 == 3, 'At Delivery')
+p_vals_melt$Timepoint2 <- replace(p_vals_melt$Timepoint2, p_vals_melt$Timepoint2 == 4, 'Post-Partum')
+p_vals_melt
+sig_p <- p_vals_melt[p_vals_melt$p < 0.05,]
+# sig_p$ast <- NA
+# sig_p$ast[sig_p$p < 0.001] <- '***'
+# sig_p$ast[sig_p$p < 0.01] <- '**'
+# sig_p$ast[sig_p$p < 0.05] <- '*'
+sig_p
+
+```
+
+```{r}
+# STACKED BAR GRAPHS
+# Load necessary libraries
+if (!requireNamespace("ggplot2", quietly = TRUE))
+    install.packages("ggplot2")
+library(ggplot2)
+if (!requireNamespace("ghibli", quietly = TRUE))
+    install.packages("ghibli")
+library(ghibli)
+
+# Assuming 'Trimester1_10_14weeks_Master' and other trimester data are already loaded with the correct data
+# Compute averages for each cell type in both groups
+average_1014 <- colMeans(Trimester1_10_14weeks_Master, na.rm = TRUE)
+average_2428 <- colMeans(Trimester2_24_28weeks_Master, na.rm = TRUE)
+average_3840 <- colMeans(Trimester3_38_40weeks_Master, na.rm = TRUE)
+average_PP <- colMeans(PP_Master, na.rm = TRUE)
+
+# Combine the averages into a data frame suitable for ggplot
+data_for_plot <- data.frame(
+  CellType = rep(colnames(Trimester1_10_14weeks_Master), 4),
+  Average = c(average_1014, average_2428, average_3840, average_PP),
+  Group = rep(c("First Trimester", "Second Trimester", "Third Trimester", "Post-Partum"), each = length(average_1014))
+)
+
+# Set the factor levels for the Group variable to control the order of the bars
+data_for_plot$Group <- factor(data_for_plot$Group, levels = c("First Trimester", "Second Trimester", "Third Trimester", "Post-Partum"))
+
+# Create the stacked bar graph
+p <- ggplot(data_for_plot, aes(x = Group, y = Average, fill = CellType)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  labs(title = "Average Cell Type Estimates by Trimester",
+       x = "GSE192918",  # If you want to remove the x-axis title
+       y = "Average Estimate",
+       fill = "Cell Type") +
+  scale_fill_ghibli_d("LaputaMedium")  # Using a Studio Ghibli palette
+
+# Remove grid lines
+p <- p + theme(panel.grid.major = element_blank(),
+               panel.grid.minor = element_blank())
+
+print(p)  # Display the plot
+
+# Save the plot
+
+png(file = "./plots/GSE192918_Temporal_stacked_bar_plot.png", width = 8, height = 4, unit = 'in', res = 300)
+p
+dev.off()
+# ggsave("GSE192918_Temporal_stacked_bar_plot.jpeg", width = 8, height = 4)
+
+```
+
+```{r}
+library(limma)
+library(ggplot2)
+library(ggsignif)
+library(gridExtra)
+library(scales)
+library(ggpubr)
+library(cowplot)
+library(grid)
+```
+
+```{r}
+Trimester1_10_14weeks_Master <- as.data.frame(Trimester1_10_14weeks_Master)
+Trimester2_24_28weeks_Master <- as.data.frame(Trimester2_24_28weeks_Master)
+Trimester3_38_40weeks_Master <- as.data.frame(Trimester3_38_40weeks_Master)
+PP_Master <- as.data.frame(PP_Master)
+
+Trimester1_10_14weeks_Master$Timepoint <- 'early'
+Trimester2_24_28weeks_Master$Timepoint <- 'mid'
+Trimester3_38_40weeks_Master$Timepoint <- 'del'
+PP_Master$Timepoint <- 'pp'
+Full_Master <- rbind(Trimester1_10_14weeks_Master, Trimester2_24_28weeks_Master, Trimester3_38_40weeks_Master, PP_Master)
+```
+
+
+
+```{r}
+#Data Processing
+
+B <- data.frame(
+  'CellType' = 'B',
+  'EstimatedFraction' = Full_Master$B,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+B$sample <- paste0(B$sampleID, B$Timepoint, B$CellType)
+rownames(B) <- B$sample
+B_data <- as.data.frame(t(B))
+B_data <- as.numeric(B_data['EstimatedFraction',])
+names(B_data) <- rownames(B)
+
+
+
+NK <- data.frame(
+  'CellType' = 'NK',
+  'EstimatedFraction' = Full_Master$NK,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+NK$sample <- paste0(NK$sampleID, NK$Timepoint, NK$CellType)
+rownames(NK) <- NK$sample
+NK_data <- as.data.frame(t(NK))
+NK_data <- as.numeric(NK_data['EstimatedFraction',])
+names(NK_data) <- rownames(NK)
+
+
+CD4T <- data.frame(
+  'CellType' = 'CD4T',
+  'EstimatedFraction' = Full_Master$CD4T,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+CD4T$sample <- paste0(CD4T$sampleID, CD4T$Timepoint, CD4T$CellType)
+rownames(CD4T) <- CD4T$sample
+CD4T_data <- as.data.frame(t(CD4T))
+CD4T_data <- as.numeric(CD4T_data['EstimatedFraction',])
+names(CD4T_data) <- rownames(CD4T)
+
+
+CD8T <- data.frame(
+  'CellType' = 'CD8T',
+  'EstimatedFraction' = Full_Master$CD8T,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+CD8T$sample <- paste0(CD8T$sampleID, CD8T$Timepoint, CD8T$CellType)
+rownames(CD8T) <- CD8T$sample
+CD8T_data <- as.data.frame(t(CD8T))
+CD8T_data <- as.numeric(CD8T_data['EstimatedFraction',])
+names(CD8T_data) <- rownames(CD8T)
+
+
+Mono <- data.frame(
+  'CellType' = 'Mono',
+  'EstimatedFraction' = Full_Master$Mono,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+Mono$sample <- paste0(Mono$sampleID, Mono$Timepoint, Mono$CellType)
+rownames(Mono) <- Mono$sample
+Mono_data <- as.data.frame(t(Mono))
+Mono_data <- as.numeric(Mono_data['EstimatedFraction',])
+names(Mono_data) <- rownames(Mono)
+
+
+Neutro <- data.frame(
+  'CellType' = 'Neutro',
+  'EstimatedFraction' = Full_Master$Neutro,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+Neutro$sample <- paste0(Neutro$sampleID, Neutro$Timepoint, Neutro$CellType)
+rownames(Neutro) <- Neutro$sample
+Neutro_data <- as.data.frame(t(Neutro))
+Neutro_data <- as.numeric(Neutro_data['EstimatedFraction',])
+names(Neutro_data) <- rownames(Neutro)
+
+
+Eosino <- data.frame(
+  'CellType' = 'Eosino',
+  'EstimatedFraction' = Full_Master$Eosino,
+  'Timepoint' = factor(Full_Master$Timepoint, levels = c('early','mid','del','pp')),
+  'sampleID' = rep(1:10, times = 4)
+)
+Eosino$sample <- paste0(Eosino$sampleID, Eosino$Timepoint, Eosino$CellType)
+rownames(Eosino) <- Eosino$sample
+Eosino_data <- as.data.frame(t(Eosino))
+Eosino_data <- as.numeric(Eosino_data['EstimatedFraction',])
+names(Eosino_data) <- rownames(Eosino)
+
+All_Cells <- rbind(B, NK, CD4T, CD8T, Mono, Neutro, Eosino)
+
+```
+
+```{r}
+#Linear Modeling
+
+B_design <- model.matrix(~ 0 + Timepoint + sampleID, data = B)
+B_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = B_design)
+
+NK_design <- model.matrix(~ 0 + Timepoint + sampleID, data = NK)
+NK_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = NK_design)
+
+CD4T_design <- model.matrix(~ 0 + Timepoint + sampleID, data = CD4T)
+CD4T_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = CD4T_design)
+
+CD8T_design <- model.matrix(~ 0 + Timepoint + sampleID, data = CD8T)
+CD8T_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = CD8T_design)
+
+Mono_design <- model.matrix(~ 0 + Timepoint + sampleID, data = Mono)
+Mono_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = Mono_design)
+
+Neutro_design <- model.matrix(~ 0 + Timepoint + sampleID, data = Neutro)
+Neutro_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = Neutro_design)
+
+Eosino_design <- model.matrix(~ 0 + Timepoint + sampleID, data = Eosino)
+Eosino_cont <- makeContrasts(EarlyvsMid = Timepointearly-Timepointmid, EarlyvsDel = Timepointearly-Timepointdel, EarlyvsPP = Timepointearly-Timepointpp, MidvsDel = Timepointmid-Timepointdel, MidvsPP = Timepointmid-Timepointpp, DelvsPP = Timepointdel-Timepointpp, levels = Eosino_design)
+
+
+B_fit <- lmFit(B_data, design = B_design)
+B_fit <- eBayes(B_fit)
+
+NK_fit <- lmFit(NK_data, design = NK_design)
+NK_fit <- eBayes(NK_fit)
+
+CD4T_fit <- lmFit(CD4T_data, design = CD4T_design)
+CD4T_fit <- eBayes(CD4T_fit)
+
+CD8T_fit <- lmFit(CD8T_data, design = CD8T_design)
+CD8T_fit <- eBayes(CD8T_fit)
+
+Mono_fit <- lmFit(Mono_data, design = Mono_design)
+Mono_fit <- eBayes(Mono_fit)
+
+Neutro_fit <- lmFit(Neutro_data, design = Neutro_design)
+Neutro_fit <- eBayes(Neutro_fit)
+
+Eosino_fit <- lmFit(Eosino_data, design = Eosino_design)
+Eosino_fit <- eBayes(Eosino_fit)
+
+
+### Contrasts
+
+B_fitCont <- contrasts.fit(B_fit, B_cont)
+B_fitCont <- eBayes(B_fitCont)
+
+NK_fitCont <- contrasts.fit(NK_fit, NK_cont)
+NK_fitCont <- eBayes(NK_fitCont)
+
+CD4T_fitCont <- contrasts.fit(CD4T_fit, CD4T_cont)
+CD4T_fitCont <- eBayes(CD4T_fitCont)
+
+CD8T_fitCont <- contrasts.fit(CD8T_fit, CD8T_cont)
+CD8T_fitCont <- eBayes(CD8T_fitCont)
+
+Mono_fitCont <- contrasts.fit(Mono_fit, Mono_cont)
+Mono_fitCont <- eBayes(Mono_fitCont)
+
+Neutro_fitCont <- contrasts.fit(Neutro_fit, Neutro_cont)
+Neutro_fitCont <- eBayes(Neutro_fitCont)
+
+Eosino_fitCont <- contrasts.fit(Eosino_fit, Eosino_cont)
+Eosino_fitCont <- eBayes(Eosino_fitCont)
+
+```
+
+```{r}
+p_values <- data.frame(
+  'CellType' = c('B','B','B','B','B','B',
+               'NK','NK','NK','NK','NK','NK',
+               'CD4T','CD4T','CD4T','CD4T','CD4T','CD4T',
+               'CD8T','CD8T','CD8T','CD8T','CD8T','CD8T',
+               'Mono','Mono','Mono','Mono','Mono','Mono',
+               'Neutro','Neutro','Neutro','Neutro','Neutro','Neutro',
+               'Eosino','Eosino','Eosino','Eosino','Eosino','Eosino'),
+  'Timepoint1' = c('First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester',
+                   'First Trimester','First Trimester','First Trimester','Second Trimester','Second Trimester','Third Trimester'),
+  'Timepoint2' = c('Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum',
+                   'Second Trimester','Third Trimester','Post- Partum','Third Trimester','Post- Partum','Post- Partum'),
+  'p' = c(B_fitCont$p.value,
+              NK_fitCont$p.value,
+              CD4T_fitCont$p.value,
+              CD8T_fitCont$p.value,
+              Mono_fitCont$p.value,
+              Neutro_fitCont$p.value,
+              Eosino_fitCont$p.value),
+  'ast' = NA,
+  'y' = 1
+)
+
+p_values$ast[p_values$p < 0.05] <- '*'
+p_values$ast[p_values$p < 0.01] <- '**'
+p_values$ast[p_values$p < 0.001] <- '***'
+
+const <- 0.1
+
+p_values$y[c(3,5,6, #B
+             11,12, #NK
+             17,18, #CD4T
+             21,23,24, #CD8T, #Neutro
+             33,35,36)] <- c(max(B$EstimatedFraction)*(1+3*const),max(B$EstimatedFraction)*(1+2*const),max(B$EstimatedFraction)*(1+const),
+                             max(NK$EstimatedFraction)*(1+2*const), max(NK$EstimatedFraction)*(1+const),
+                             max(CD4T$EstimatedFraction)*(1+2*const), max(CD4T$EstimatedFraction)*(1+const),
+                             max(CD8T$EstimatedFraction)*(1+3*const),max(CD8T$EstimatedFraction)*(1+2*const),max(CD8T$EstimatedFraction)*(1+const),
+                             max(Neutro$EstimatedFraction)*(1+3*const),max(Neutro$EstimatedFraction)*(1+2*const),max(Neutro$EstimatedFraction)*(1+const))
+
+
+```
+
+```{r}
+B$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+NK$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+CD4T$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+CD8T$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+Mono$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+Neutro$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+Eosino$Timepoint <- factor(rep(c('First Trimester','Second Trimester','Third Trimester','Post- Partum'), each = 10), levels = c('First Trimester','Second Trimester','Third Trimester','Post- Partum'))
+```
+
+```{r}
+#Plotting
+library(stringr)
+B_col = '#06141E'
+NK_col = '#742C15'
+CD4T_col = '#3D4F7D'
+CD8T_col = '#656F60'
+Mono_col = '#CD4F38'
+Neutro_col = '#E48C2A'
+Eosino_col = '#EAD890'
+
+
+cell_Plot <- function(frame, cell_name, cell_color, break_num){
+  return(ggplot(frame, aes(x = Timepoint, y = EstimatedFraction, color = cell_color)) + 
+    geom_jitter(width = 0.25, height = 0, show.legend = FALSE) +
+    labs(x = '', y = '') +
+    geom_signif(
+      data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+      aes(xmin = Timepoint1, xmax = Timepoint2, annotations = ast, y_position = y, fill = 'black'),
+      manual = T,
+      inherit.aes = F) +
+    geom_signif(
+      data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+      aes(xmin = Timepoint1, xmax = Timepoint2, annotations = NA, y_position = y+(0.075*y)),
+      manual = T,
+      inherit.aes = F) +
+    geom_signif(
+      data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+      aes(xmin = Timepoint1, xmax = Timepoint2, annotations = NA, y_position = 0),
+      manual = T,
+      inherit.aes = F) +
+    stat_summary(
+      geom = "point",
+      fun = "mean",
+      size = 10,
+      shape = 95,
+      fill = cell_color,
+      aes(color=CellType),
+      show.legend = F
+    ) +
+    scale_y_continuous(breaks = break_num) +
+    scale_color_manual(values = c(cell_color, cell_color)) +
+    theme_classic() +
+    scale_x_discrete(labels = function(Timepoint) str_wrap(Timepoint, width = 10))
+  )
+}
+
+plot_Blank <- function(frame, cell_name, cell_color, break_num){
+  return(ggplot(frame, aes(x = Timepoint, y = EstimatedFraction, color = cell_color)) + 
+           geom_jitter(width = 0.25, height = 0, show.legend = FALSE) +
+           labs(x = '', y = '') +
+           geom_signif(
+             data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+             aes(xmin = Timepoint1, xmax = Timepoint2, annotations = ast, y_position = y, fill = 'black'),
+             manual = T,
+             inherit.aes = F) +
+           geom_signif(
+             data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+             aes(xmin = Timepoint1, xmax = Timepoint2, annotations = NA, y_position = y+(0.075*y)),
+             manual = T,
+             inherit.aes = F) +
+           geom_signif(
+             data = p_values[!is.na(p_values$ast) & p_values$CellType == cell_name,],
+             aes(xmin = Timepoint1, xmax = Timepoint2, annotations = NA, y_position = 0),
+             manual = T,
+             inherit.aes = F) +
+           stat_summary(
+             geom = "point",
+             fun = "mean",
+             size = 10,
+             shape = 95,
+             fill = cell_color,
+             aes(color=CellType),
+             show.legend = F
+           ) +
+           scale_y_continuous(breaks = break_num, limits = c(0,NA)) +
+           scale_color_manual(values = c(cell_color, cell_color)) +
+           ylim(0,0.009) +
+          theme_classic() +
+          scale_x_discrete(labels = function(Timepoint) str_wrap(Timepoint, width = 10))
+  )
+}
+
+B_plot <- cell_Plot(B, 'B', B_col, c(0,0.025, 0.05, 0.075))
+B_plot
+
+NK_plot <- cell_Plot(NK, 'NK', NK_col, c(0,0.05, 0.1, 0.15))
+NK_plot
+
+CD4T_plot <- cell_Plot(CD4T, 'CD4T', CD4T_col, c(0,0.066,0.133,0.20))
+CD4T_plot
+
+CD8T_plot <- cell_Plot(CD8T, 'CD8T', CD8T_col, c(0,0.1, 0.2, 0.3))
+CD8T_plot
+
+Mono_plot <- cell_Plot(Mono, 'Mono', Mono_col, c(0,0.05, 0.1, 0.15))
+Mono_plot
+
+Neutro_plot <- cell_Plot(Neutro, 'Neutro', Neutro_col, c(0,0.33,0.66,1))
+Neutro_plot
+
+Eosino_plot <- plot_Blank(Eosino, 'Eosino', Eosino_col, c(0,0.003,0.006,0.009))
+Eosino_plot
+
+
+plot_legend <- as_ggplot(get_legend(ggplot(All_Cells, aes(x = Timepoint, y = EstimatedFraction, color = factor(CellType, levels = c('Mono', 'Neutro', 'Eosino', 'NK', 'B', 'CD4T', 'CD8T')))) +
+  geom_jitter() +
+  scale_color_manual(values = c("B" = B_col, "NK" = NK_col, "CD4T" = CD4T_col, "CD8T" = CD8T_col, "Mono" = Mono_col, "Neutro" = Neutro_col, "Eosino" = Eosino_col),
+                     labels = c('B' = 'B-cells', 'NK' = 'Natural Killer cells', 'CD4T' = 'CD4+ T cells', 'CD8T' = 'CD8+ T cells', 'Mono' = 'Monocytes', 'Neutro' = 'Neutrophils', 'Eosino' = 'Eosinophils')) +
+    theme_bw() +
+    labs(color = 'Cell type')
+  
+)
+)
+plot_legend
+
+plots <- plot_grid(Mono_plot, Neutro_plot, Eosino_plot, NK_plot,
+                   B_plot, CD4T_plot, CD8T_plot, plot_legend,
+                   ncol = 4)
+
+y.text <- textGrob('Estimated Fraction (%)', gp=gpar(fontsize = 15), rot = 90)
+x.text <- textGrob('Timepoint', gp=gpar(fontsize = 15))
+
+
+png(file = './plots/GSE192918_Timepoint.png', height = 6.5, width = 13, unit = 'in', res = 300)
+grid.arrange(arrangeGrob(plots, left = y.text, bottom = x.text))
+dev.off()
+```

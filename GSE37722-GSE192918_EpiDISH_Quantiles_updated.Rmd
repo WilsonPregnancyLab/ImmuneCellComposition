@@ -1,0 +1,302 @@
+---
+title: "GSE37722-GSE192918_NormotensiveVPreeclampsia_Quant_EpiDISH"
+author: "L"
+date: "2024-04-03"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r}
+if (!requireNamespace("GEOquery", quietly = TRUE))
+    BiocManager::install("GEOquery")
+
+library(GEOquery)
+library(limma)
+
+# Load series and platform data from GEO for GSE37722
+gset1 <- getGEO("GSE37722", GSEMatrix = TRUE, getGPL = FALSE)
+if (length(gset1) > 1) idx <- grep("GPL8490", attr(gset1, "names")) else idx <- 1
+gset1 <- gset1[[idx]]
+
+# Load data from GSE192918
+gset2 <- getGEO("GSE192918", GSEMatrix = TRUE, getGPL = FALSE)
+if (length(gset2) > 1) idx <- grep("GPL21145", attr(gset2, "names")) else idx <- 1
+gset2 <- gset2[[idx]]
+
+# Extract expression matrices from both datasets
+ex1 <- exprs(gset1)
+ex2 <- exprs(gset2)
+
+# Identify common CpG sites (probe IDs) between the two datasets
+commonCpGs <- intersect(rownames(ex1), rownames(ex2))
+
+# Filter both expression matrices to include only the common CpG sites
+ex1_common <- ex1[rownames(ex1) %in% commonCpGs, ]
+ex2_common <- ex2[rownames(ex2) %in% commonCpGs, ]
+
+# Check for NAs
+anyNA(ex1_common)
+anyNA(ex2_common)
+# Correcting the filtering of NAs for both datasets
+ex1_common <- ex1_common[!rowSums(is.na(ex1_common)), ]
+ex2_common <- ex2_common[!rowSums(is.na(ex2_common)), ]
+
+commonCpGs_postNA <- intersect(rownames(ex1_common), rownames(ex2_common))
+ex1_common <- ex1_common[rownames(ex1_common) %in% commonCpGs_postNA, ]
+ex2_common <- ex2_common[rownames(ex2_common) %in% commonCpGs_postNA, ]
+
+if (!requireNamespace("preprocessCore", quietly = TRUE))
+    BiocManager::install("preprocessCore")
+library(preprocessCore)
+
+if (!is.matrix(ex1_common)) {
+    stop("The input data is not a matrix.")
+}
+if (any(is.na(ex1_common))) {
+    stop("The matrix contains NA values. Please handle them before normalization.")
+}
+if (any(ex1_common < 0 | ex1_common > 1)) {
+    stop("Beta values should be between 0 and 1.")
+}
+if (!is.matrix(ex2_common)) {
+    stop("The input data is not a matrix.")
+}
+if (any(is.na(ex2_common))) {
+    stop("The matrix contains NA values. Please handle them before normalization.")
+}
+if (any(ex2_common < 0 | ex2_common > 1)) {
+    stop("Beta values should be between 0 and 1.")
+}
+
+#COMBINE BOTH DATASETS AND RUN EPIDISH
+Master_GSE37722_GSE192918 <- merge(ex1_common, ex2_common, by = "row.names")
+# Convert the data frame to a matrix, assuming all columns except the first (Row.names) are numeric
+Master_data_matrix <- as.matrix(Master_GSE37722_GSE192918[,-1])
+# Apply the quantile normalization
+Master_normalized_GSE37722_GSE192918 <- normalize.quantiles(Master_data_matrix, keep.names = TRUE)
+# If you need the row names back in your normalized matrix:
+rownames(Master_normalized_GSE37722_GSE192918) <- Master_GSE37722_GSE192918$Row.names
+
+# Checking my normalized data
+head(Master_normalized_GSE37722_GSE192918)
+str(Master_normalized_GSE37722_GSE192918)
+
+if (!requireNamespace("EpiDISH", quietly = TRUE))
+    BiocManager::install("EpiDISH")
+library(EpiDISH)
+M_N_Epidish_GSE37722_GSE192918 <- epidish(beta.m = Master_normalized_GSE37722_GSE192918, ref.m = centDHSbloodDMC.m, method = "RPC")
+
+print(M_N_Epidish_GSE37722_GSE192918)
+
+#SEPERATE OUT SUBSETS OF ANALSYSIS
+library(dplyr)
+#MASTER -NORMOTENSIVE (GSE37722+GSE1929) ONLY
+GSM_lines_NL <- c("GSM926075", "GSM926079", "GSM926083", "GSM926087", "GSM926091", "GSM926095", "GSM926099", "GSM926103", "GSM926107", "GSM926111", "GSM926115", "GSM926119", "GSM926123", "GSM926127", "GSM5769034", "GSM5769038", "GSM5769042", "GSM5769046", "GSM5769050", "GSM5769054", "GSM5769058", "GSM5769062", "GSM5769066", "GSM5769070")
+MASTER_EstFraction <- M_N_Epidish_GSE37722_GSE192918$estF
+Normotensive_Master <- MASTER_EstFraction[rownames(MASTER_EstFraction) %in% GSM_lines_NL,]
+print(Normotensive_Master)
+
+#MASTER -PREECLAMPSIA (GSE37722) ONLY
+GSM_lines_PE = c("GSM926129", "GSM926130", "GSM926131", "GSM926132", "GSM926133", "GSM926134", "GSM926135", "GSM926136", "GSM926137", "GSM926138", "GSM926139", "GSM926140", "GSM926141", "GSM926142")
+Preeclampsia_Master <- MASTER_EstFraction[rownames(MASTER_EstFraction) %in% GSM_lines_PE,]
+print(Preeclampsia_Master)
+```
+
+```{r}
+library(reshape2)
+
+Normotensive_melt <- melt(Normotensive_Master)
+Preeclampsia_melt <- melt(Preeclampsia_Master)
+
+distribution_test <- ks.test(Normotensive_melt$value, Preeclampsia_melt$value)
+distribution_test$p.value
+```
+
+```{r}
+#Stacked Bar Graph
+# Load necessary libraries
+if (!requireNamespace("ggplot2", quietly = TRUE))
+    install.packages("ggplot2")
+library(ggplot2)
+if (!requireNamespace("ghibli", quietly = TRUE))
+    install.packages("ghibli")
+library(ghibli)
+library(ggsignif)
+
+# Assuming 'Preeclampsia_Master' and 'Normotensive_Master' are already loaded with the correct data
+# Compute averages for each cell type in both groups
+average_PE <- colMeans(Preeclampsia_Master, na.rm = TRUE)
+average_NL <- colMeans(Normotensive_Master, na.rm = TRUE)
+
+# Combine the averages into a data frame suitable for ggplot
+data_for_plot <- data.frame(
+  CellType = rep(colnames(Preeclampsia_Master), 2),
+  Average = c(average_PE, average_NL),
+  Group = rep(c("Preeclampsia", "Normotensive"), each = length(average_PE))
+)
+
+# Create the stacked bar graph
+p <- ggplot(data_for_plot, aes(x = Group, y = Average, fill = CellType)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_signif(comparisons = list(c('Normotensive','Preeclampsia')),
+              annotations = paste0('p = ', signif(distribution_test$p.value, 2)),
+              y_position = 1.05) +
+  theme_minimal() +
+  labs(title = "Average Cell Type Estimates",
+       x = "GSE337722",
+       y = "Average Estimate",
+       fill = "Cell Type") +
+  scale_fill_ghibli_d("LaputaMedium")  # Corrected to use fill instead of colour
+
+# Remove grid lines
+p <- p + theme(panel.grid.major = element_blank(),
+               panel.grid.minor = element_blank())
+
+print(p)  # Display the plot
+png(file = "./plots/NvPE_stacked_bar_plot.png", width = 4, height = 4, unit = 'in', res = 300)
+p
+dev.off()
+
+# Optionally, you might want to save the plot
+# ggsave("stacked_bar_plot.pdf", width = 8, height = 4)
+
+```
+```{r}
+library(limma)
+library(ggplot2)
+library(ggsignif)
+library(gridExtra)
+library(scales)
+library(ggpubr)
+library(cowplot)
+library(grid)
+```
+```{r}
+Normotensive_Master <- as.data.frame(Normotensive_Master)
+Preeclampsia_Master <- as.data.frame(Preeclampsia_Master)
+
+Normotensive_Master$Group <- 'Normotensive'
+Preeclampsia_Master$Group <- 'Preeclampsia'
+
+All_Master <- rbind(Normotensive_Master, Preeclampsia_Master)
+```
+
+```{r}
+B <- All_Master[,c('B', 'Group')]
+names(B) <- c('value', 'Group')
+
+NK <- All_Master[,c('NK', 'Group')]
+names(NK) <- c('value', 'Group')
+
+CD4T <- All_Master[,c('CD4T', 'Group')]
+names(CD4T) <- c('value', 'Group')
+
+CD8T <- All_Master[,c('CD8T', 'Group')]
+names(CD8T) <- c('value', 'Group')
+
+Mono <- All_Master[,c('Mono', 'Group')]
+names(Mono) <- c('value', 'Group')
+
+Neutro <- All_Master[,c('Neutro', 'Group')]
+names(Neutro) <- c('value', 'Group')
+
+Eosino <- All_Master[,c('Eosino', 'Group')]
+names(Eosino) <- c('value', 'Group')
+
+do_plot <- function(frame, plot_title, break_num) {
+  return(
+    ggboxplot(frame, x = 'Group', y = 'value', fill = 'Group') +
+    geom_jitter(width = 0.35, height = 0) +
+  geom_signif(comparisons = list(c('Normotensive', 'Preeclampsia')), test = 'wilcox.test', map_signif_level = function(x) sprintf("p = %.2g", x), textsize = 4, margin_top = 0.05, vjust = -0.25) +
+  scale_fill_manual(values = c("grey64","white")) +
+  ggtitle(plot_title) +
+    ylab('  ') +
+    theme_bw() +
+    theme(panel.background = element_rect(fill = "white"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(fill = "white"),
+          strip.text = element_text(color = "black"),
+          legend.position = "none",  # Keep legend on for one plot
+          axis.text.x = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_text(size = 12),
+          axis.text.y = element_text(size = 10),
+          axis.ticks.y = element_line(size = 0.5),
+          plot.margin = margin(0.5,0.5,0.5,0.5),
+          plot.title = element_text(size = 14, hjust = 0.5),
+          aspect.ratio = 1)+
+        coord_cartesian(ylim=c(min(frame$value), max(frame$value) + 0.1 * max(frame$value))) +
+    scale_y_continuous(breaks = break_num, limits = c(0,NA))
+  )
+}
+
+do_zeros <- function(frame, plot_title, break_num) {
+  return(
+    ggboxplot(frame, x = 'Group', y = 'value', fill = 'Group') +
+    geom_jitter(width = 0.35, height = 0) + 
+  geom_signif(comparisons = list(c('Normotensive', 'Preeclampsia')), test = 'wilcox.test', map_signif_level = function(x) sprintf("p = %.2g", x), textsize = 4, margin_top = 0.05, vjust = -0.25, y = 0.01) +
+  scale_fill_manual(values = c("grey64","white")) +
+  ggtitle(plot_title) +
+    ylab('  ') +
+    theme_bw() +
+    theme(panel.background = element_rect(fill = "white"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(fill = "white"),
+          strip.text = element_text(color = "black"),
+          legend.position = "none",  # Keep legend on for one plot
+          axis.text.x = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_text(size = 12),
+          axis.text.y = element_text(size = 10),
+          axis.ticks.y = element_line(size = 0.5),
+          plot.margin = margin(0.5,0.5,0.5,0.5),
+          plot.title = element_text(size = 14, hjust = 0.5),
+          aspect.ratio = 1)+
+        coord_cartesian(ylim=c(0,0.05)) +
+        scale_y_continuous(breaks = break_num, limits = c(0,NA))
+  )
+}
+
+
+legend <-   ggboxplot(B, x = 'Group', y = 'value', add = 'jitter', fill = 'Group') + 
+  geom_signif(comparisons = list(c('Normotensive', 'Preeclampsia')), test = 't.test', map_signif_level = function(x) sprintf("p = %.2g", x), textsize = 2.8) +
+  scale_fill_manual(values = c("grey64","white")) +
+  ylab('') +
+  ggtitle(B) +
+    theme_bw() +
+    theme(panel.background = element_rect(fill = "white"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(fill = "white"),
+          strip.text = element_text(color = "black"),
+          axis.text.x = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_text(size = 12),
+          axis.text.y = element_text(size = 10),
+          axis.ticks.y = element_line(linewidth = 0.5),
+          plot.margin = margin(0.5,0.5,0.5,0.5),
+          plot.title = element_text(size = 14, hjust = 0.5),
+          aspect.ratio = 1)
+    
+y.text <- textGrob('Estimated Fraction (%)', gp=gpar(fontsize = 15), rot = 90)
+plots <- plot_grid(do_plot(Mono, 'Monocytes', c(0,0.05,0.1,0.15)), 
+                   do_plot(Neutro, 'Neutrophils', c(0.6,0.7,0.8,0.9)), 
+                   do_zeros(Eosino, 'Eosinophils', c(0,0.015,0.03,0.045)),
+                   do_plot(NK, 'Natural Killer cells', c(0,0.015,0.03,0.045)),
+                   do_plot(B, 'B-cells', c(0,0.025,0.05,0.075)),
+                   do_plot(CD4T, 'CD4+ T cells', c(0,0.015,0.03,0.045)),
+                   do_plot(CD8T, 'CD8+ T cells', c(0.05,0.15,0.25,0.35)), 
+                   get_legend(legend),
+                   scale = 1,
+          ncol = 4
+            
+           )
+
+png(file = './plots/PEvsNorm.png', height = 6, width = 12, unit = 'in', res = 300)
+grid.arrange(arrangeGrob(plots, left = y.text))
+dev.off()
+```
